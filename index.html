@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Rotina">
+  <meta name="theme-color" content="#007aff">
+  <meta name="description" content="Planeador de rotina diária e semanal">
+  <title>Rotina</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.svg">
+  <link rel="icon" href="icon-192.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <div class="page-header">
+      <h1 class="page-title" id="page-title">Hoje</h1>
+      <button class="btn-add" id="btn-add" aria-label="Adicionar">+</button>
+    </div>
+    <div class="tab-content">
+      <div class="tab-pane active" id="tab-today"></div>
+      <div class="tab-pane" id="tab-week"></div>
+      <div class="tab-pane" id="tab-tasks"></div>
+      <div class="tab-pane" id="tab-settings"></div>
+    </div>
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="today" data-title="Hoje">
+        <span class="nav-icon">☀️</span>
+        <span class="nav-label">Hoje</span>
+      </button>
+      <button class="nav-item" data-tab="week" data-title="Semana">
+        <span class="nav-icon">📅</span>
+        <span class="nav-label">Semana</span>
+      </button>
+      <button class="nav-item" data-tab="tasks" data-title="Tarefas">
+        <span class="nav-icon">✅</span>
+        <span class="nav-label">Tarefas</span>
+      </button>
+      <button class="nav-item" data-tab="settings" data-title="Definições">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Definições</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-btn cancel" id="btn-cancel">Cancelar</button>
+        <h2 class="modal-title" id="modal-title">Nova Tarefa</h2>
+        <button class="modal-btn" id="btn-save">Guardar</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
