@@ -402,6 +402,7 @@ body {
 
 .settings-label { font-size: 16px; }
 .settings-value { font-size: 14px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.settings-hint { font-size: 12px; color: var(--warning); padding: 8px 16px 12px; line-height: 1.5; }
 
 .toggle {
   width: 51px;
