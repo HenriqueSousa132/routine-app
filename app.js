@@ -23,23 +23,39 @@ const DB = {
   setTasks:    v  => localStorage.setItem('tasks', JSON.stringify(v)),
   getSettings: () => JSON.parse(localStorage.getItem('settings') || '{"notifications":false}'),
   setSettings: v  => localStorage.setItem('settings', JSON.stringify(v)),
+  getHealth:   d  => JSON.parse(localStorage.getItem('health_' + d) || '{"water":0,"meals":[]}'),
+  setHealth:   (d,v) => localStorage.setItem('health_' + d, JSON.stringify(v)),
+  getGoals:    () => JSON.parse(localStorage.getItem('goals') || '{"water":2000,"calories":2000}'),
+  setGoals:    v  => localStorage.setItem('goals', JSON.stringify(v)),
 };
 
 // ---- State ----
-let activeTab = 'today';
 let filter = { category: 'all', priority: 'all' };
 let editId = null;
 let timers = {};
+let nowLineInterval = null;
+let modalMode = 'task';
+let modalContext = null;
+let foodSearchTimer = null;
 
 // ---- Bootstrap ----
 document.addEventListener('DOMContentLoaded', () => {
   registerSW();
-  bindNav();
   bindModal();
-  renderToday();
+  document.getElementById('btn-settings').addEventListener('click', openSettings);
+  renderDashboard();
   askNotifications();
   scheduleAll();
-  setInterval(drawNowLine, 60000);
+  nowLineInterval = setInterval(drawNowLine, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(nowLineInterval);
+      nowLineInterval = null;
+    } else {
+      drawNowLine();
+      nowLineInterval = setInterval(drawNowLine, 60000);
+    }
+  });
 });
 
 function registerSW() {
@@ -48,68 +64,46 @@ function registerSW() {
   }
 }
 
-// ---- Navigation ----
-function bindNav() {
-  document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      document.getElementById('page-title').textContent = btn.dataset.title;
-      activeTab = btn.dataset.tab;
-      render(activeTab);
-    });
-  });
-}
-
-function render(tab) {
-  if (tab === 'today')    renderToday();
-  else if (tab === 'week')     renderWeek();
-  else if (tab === 'tasks')    renderTasks();
-  else if (tab === 'settings') renderSettings();
-}
-
-// ---- TODAY VIEW ----
-function renderToday() {
-  const el = document.getElementById('tab-today');
+// ---- DASHBOARD ----
+function renderDashboard() {
+  const el = document.getElementById('dashboard');
   const now = new Date();
   const todayIdx = now.getDay();
   const todayDate = isoDate(now);
 
-  const items = DB.getTasks().filter(t =>
-    (t.date && t.date === todayDate) ||
-    (t.days && t.days.includes(todayIdx))
-  );
+  document.getElementById('page-title').textContent = now.getDate() + ' ' + MONTHS[now.getMonth()];
+  document.getElementById('page-weekday').textContent = DAYS_LONG[todayIdx];
 
+  const allTasks = DB.getTasks();
+  const todayTasks = allTasks.filter(t =>
+    (t.date && t.date === todayDate) || (t.days && t.days.includes(todayIdx))
+  );
   const byHour = {};
   const unscheduled = [];
-  items.forEach(t => {
-    if (t.startTime) {
-      const h = +t.startTime.split(':')[0];
-      (byHour[h] = byHour[h] || []).push(t);
-    } else {
-      unscheduled.push(t);
-    }
+  todayTasks.forEach(t => {
+    if (t.startTime) { const h = +t.startTime.split(':')[0]; (byHour[h] = byHour[h] || []).push(t); }
+    else unscheduled.push(t);
   });
+
+  let html = '';
+
+  // Health
+  html += renderHealthWidgets(todayDate);
 
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-
-  let html = `<div class="today-header">
-    <div class="today-date">${now.getDate()} ${MONTHS[now.getMonth()]}</div>
-    <div class="today-weekday">${DAYS_LONG[todayIdx]}</div>
-  </div>`;
-
   if (isIOS && !isStandalone) {
-    html += `<div class="banner">📱 Para notificações no iPhone, adiciona ao Ecrã Inicial: Partilhar → "Adicionar ao Ecrã Inicial".</div>`;
+    html += `<div class="banner" style="margin-bottom:0">📱 Adiciona ao Ecrã Inicial para activar notificações.</div>`;
   }
 
-  if (items.length === 0) {
-    html += emptyState('☀️', 'Dia livre!', 'Toca no + para adicionar uma tarefa ou bloco de rotina.');
-  } else {
+  // Agenda
+  html += `<div class="section" style="margin-top:20px"><div class="section-title">Agenda de hoje</div>`;
+  const scheduledHours = Object.keys(byHour).map(Number);
+  if (scheduledHours.length) {
+    const minH = Math.max(0, Math.min(...scheduledHours) - 1);
+    const maxH = Math.min(23, Math.max(...scheduledHours) + 1);
     html += '<div class="timeline" id="timeline">';
-    for (let h = 6; h <= 23; h++) {
+    for (let h = minH; h <= maxH; h++) {
       const evs = byHour[h] || [];
       html += `<div class="timeline-slot" data-hour="${h}">
         <div class="timeline-hour">${pad(h)}:00</div>
@@ -118,11 +112,44 @@ function renderToday() {
       </div>`;
     }
     html += '</div>';
-
-    if (unscheduled.length) {
-      html += `<div class="section" style="margin-top:12px"><div class="section-title">Sem horário</div><div class="card">${unscheduled.map(taskRow).join('')}</div></div>`;
-    }
+  } else {
+    html += `<p class="ds-empty-text">Sem eventos agendados para hoje.</p>`;
   }
+  if (unscheduled.length) {
+    html += `<div class="card" style="margin-top:8px">${unscheduled.map(taskRow).join('')}</div>`;
+  }
+  html += '</div>';
+
+  // Tasks
+  let tasks = allTasks;
+  if (filter.category !== 'all') tasks = tasks.filter(t => t.category === filter.category);
+  if (filter.priority !== 'all') tasks = tasks.filter(t => t.priority === filter.priority);
+  const priO = { high: 0, medium: 1, low: 2 };
+  tasks.sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    return (priO[a.priority] ?? 1) - (priO[b.priority] ?? 1);
+  });
+  html += `<div class="section"><div class="section-title">Tarefas</div>
+    <div class="filters">`;
+  html += chip('all', filter.category, 'Todas', "setFilter('category','all')");
+  Object.entries(CATS).forEach(([k, v]) =>
+    html += chip(k, filter.category, v.emoji + ' ' + v.label, `setFilter('category','${k}')`)
+  );
+  html += `</div><div class="filters" style="padding-top:0">`;
+  html += chip('all', filter.priority, 'Todas', "setFilter('priority','all')");
+  Object.entries(PRIS).forEach(([k, v]) =>
+    html += chip(k, filter.priority, v.label, `setFilter('priority','${k}')`)
+  );
+  html += '</div>';
+  if (tasks.length === 0) {
+    html += emptyState('✅', 'Sem tarefas', 'Toca no + para criar a tua primeira tarefa.');
+  } else {
+    html += `<div class="card">${tasks.map(taskRow).join('')}</div>`;
+  }
+  html += '</div>';
+
+  // Week
+  html += `<div class="section"><div class="section-title">Esta semana</div>${renderWeekContent(now, allTasks)}</div>`;
 
   el.innerHTML = html;
   drawNowLine();
@@ -156,14 +183,228 @@ function drawNowLine() {
   tl.appendChild(ind);
 }
 
-// ---- WEEK VIEW ----
-function renderWeek() {
-  const el = document.getElementById('tab-week');
-  const now = new Date();
-  const todayIdx = now.getDay();
+// ---- HEALTH WIDGETS ----
+function renderHealthWidgets(date) {
+  const h = DB.getHealth(date);
+  const g = DB.getGoals();
 
+  const waterPct = Math.min(100, h.water / g.water * 100);
+  const totalKcal = h.meals.reduce((s, m) => s + m.kcal, 0);
+  const calPct = Math.min(100, totalKcal / g.calories * 100);
+  const calOver = totalKcal > g.calories;
+
+  const waterLabel = h.water >= 1000
+    ? (h.water / 1000).toFixed(1).replace(/\.0$/, '') + ' L'
+    : h.water + ' ml';
+  const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
+
+  const recentMeals = h.meals.slice(-3).map(m =>
+    `<div class="meal-item"><span>${esc(m.name)}</span><span class="meal-kcal">${m.kcal}</span></div>`
+  ).join('');
+
+  return `<div class="health-widgets">
+    <div class="health-card">
+      <div class="health-card-title">💧 Água</div>
+      <div class="health-card-value">${waterLabel}</div>
+      <div class="health-card-goal">meta: ${goalWater}</div>
+      <div class="health-progress"><div class="health-progress-fill water-fill" style="width:${waterPct}%"></div></div>
+      <div class="water-btns">
+        <button class="water-btn" onclick="addWater(150,'${date}')">+150</button>
+        <button class="water-btn" onclick="addWater(250,'${date}')">+250</button>
+        <button class="water-btn" onclick="addWater(500,'${date}')">+500</button>
+        <button class="water-btn water-btn-edit" onclick="openWaterCustom('${date}')">✎</button>
+      </div>
+    </div>
+    <div class="health-card">
+      <div class="health-card-title">🔥 Calorias</div>
+      <div class="health-card-value">${totalKcal} <span class="health-card-unit">kcal</span></div>
+      <div class="health-card-goal">meta: ${g.calories} kcal</div>
+      <div class="health-progress"><div class="health-progress-fill cal-fill${calOver ? ' over' : ''}" style="width:${calPct}%"></div></div>
+      ${recentMeals ? `<div class="meal-list">${recentMeals}</div>` : ''}
+      <button class="cal-btn" onclick="openAddMeal('${date}')">+ Refeição</button>
+    </div>
+  </div>`;
+}
+
+function addWater(ml, date) {
+  const h = DB.getHealth(date);
+  h.water = (h.water || 0) + ml;
+  DB.setHealth(date, h);
+  toast(`+${ml} ml 💧`);
+  renderDashboard();
+}
+
+function openWaterCustom(date) {
+  modalMode = 'water';
+  modalContext = { date };
+  document.getElementById('modal-title').textContent = 'Adicionar Água';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">Quantidade (ml)</label>
+    <input class="form-input" id="f-water-ml" type="number" inputmode="numeric" placeholder="ex: 330" min="1">
+  </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-water-ml')?.focus(), 100);
+}
+
+function saveWaterCustom() {
+  const ml = parseInt(document.getElementById('f-water-ml')?.value);
+  if (isNaN(ml) || ml <= 0) { toast('Valor inválido'); return; }
+  closeModal();
+  addWater(ml, modalContext?.date || isoDate(new Date()));
+}
+
+function openAddMeal(date) {
+  modalMode = 'meal';
+  modalContext = { date };
+  const canScan = 'BarcodeDetector' in window;
+  document.getElementById('modal-title').textContent = 'Adicionar Refeição';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">Pesquisar alimento</label>
+    <div class="food-search-row">
+      <input class="form-input food-search-input" id="f-food-search" type="text"
+             placeholder="ex: frango grelhado, arroz…" autocomplete="off"
+             oninput="onFoodSearch(this.value)">
+      ${canScan ? `<button class="food-scan-btn" onclick="scanBarcode()" title="Ler código de barras">📷</button>` : ''}
+    </div>
+    <div id="food-results" class="food-results"></div>
+
+    <label class="form-label">Nome da refeição</label>
+    <input class="form-input" id="f-meal-name" type="text" placeholder="Nome" autocomplete="off">
+
+    <label class="form-label">Porção e calorias</label>
+    <div class="form-row">
+      <input class="form-input" id="f-meal-portion" type="number" inputmode="numeric"
+             placeholder="Porção (g)" min="1" value="100" oninput="recalcKcal()">
+      <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric"
+             placeholder="Calorias (kcal)" min="0">
+    </div>
+    <input id="f-kcal-100g" type="hidden" value="">
+  </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-food-search')?.focus(), 100);
+}
+
+function saveMeal() {
+  const name = document.getElementById('f-meal-name')?.value.trim();
+  const kcal = parseInt(document.getElementById('f-meal-kcal')?.value);
+  if (!name) { toast('Adiciona o nome da refeição!'); return; }
+  if (isNaN(kcal) || kcal < 0) { toast('Calorias inválidas!'); return; }
+  const date = modalContext?.date || isoDate(new Date());
+  const h = DB.getHealth(date);
+  h.meals.push({ id: uid(), name, kcal, time: new Date().toTimeString().slice(0, 5) });
+  DB.setHealth(date, h);
+  closeModal();
+  toast('Refeição adicionada! 🔥');
+  renderDashboard();
+}
+
+// ---- FOOD SEARCH (Open Food Facts) ----
+function onFoodSearch(q) {
+  clearTimeout(foodSearchTimer);
+  const box = document.getElementById('food-results');
+  if (!box) return;
+  if (!q || q.length < 2) { box.innerHTML = ''; box.classList.remove('visible'); return; }
+  box.innerHTML = '<div class="food-searching">A pesquisar…</div>';
+  box.classList.add('visible');
+  foodSearchTimer = setTimeout(() => fetchFoodSearch(q), 400);
+}
+
+async function fetchFoodSearch(q) {
+  const box = document.getElementById('food-results');
+  if (!box) return;
+  try {
+    const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms='
+      + encodeURIComponent(q)
+      + '&search_simple=1&action=process&json=1&fields=product_name,brands,nutriments&page_size=7';
+    const res = await fetch(url);
+    const data = await res.json();
+    const items = (data.products || []).filter(p =>
+      p.product_name && p.nutriments?.['energy-kcal_100g'] != null
+    ).slice(0, 6);
+    if (!items.length) {
+      box.innerHTML = '<div class="food-searching">Sem resultados — insere as kcal manualmente.</div>';
+      return;
+    }
+    box.innerHTML = items.map(p => {
+      const name = p.product_name;
+      const brand = p.brands ? ' · ' + p.brands.split(',')[0].trim() : '';
+      const kcal = Math.round(p.nutriments['energy-kcal_100g']);
+      return `<div class="food-result-item" data-name="${esc(name)}" data-kcal="${kcal}" onclick="selectFood(this)">
+        <span class="food-result-name">${esc(name)}<span class="food-result-brand">${esc(brand)}</span></span>
+        <span class="food-result-kcal">${kcal} kcal/100g</span>
+      </div>`;
+    }).join('');
+  } catch {
+    box.innerHTML = '<div class="food-searching">Sem ligação — insere as kcal manualmente.</div>';
+  }
+}
+
+function selectFood(el) {
+  const name = el.dataset.name;
+  const kcal100 = parseInt(el.dataset.kcal);
+  document.getElementById('f-meal-name').value = name;
+  document.getElementById('f-food-search').value = name;
+  document.getElementById('f-kcal-100g').value = kcal100;
+  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+  const box = document.getElementById('food-results');
+  box.innerHTML = '';
+  box.classList.remove('visible');
+}
+
+function recalcKcal() {
+  const kcal100 = parseInt(document.getElementById('f-kcal-100g')?.value);
+  if (!kcal100) return;
+  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+}
+
+async function scanBarcode() {
+  if (!('BarcodeDetector' in window)) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = 'environment';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+      const barcodes = await detector.detect(bitmap);
+      if (!barcodes.length) { toast('Código de barras não detectado'); return; }
+      toast('A pesquisar produto…');
+      await fetchByBarcode(barcodes[0].rawValue);
+    } catch { toast('Erro ao ler código de barras'); }
+  };
+  input.click();
+}
+
+async function fetchByBarcode(code) {
+  try {
+    const res = await fetch('https://world.openfoodfacts.org/api/v0/product/' + code + '.json');
+    const data = await res.json();
+    if (data.status !== 1) { toast('Produto não encontrado'); return; }
+    const p = data.product;
+    const kcal100 = Math.round(p.nutriments?.['energy-kcal_100g'] || 0);
+    const name = p.product_name_pt || p.product_name || code;
+    if (!kcal100) { toast('Produto sem informação nutricional'); return; }
+    document.getElementById('f-meal-name').value = name;
+    document.getElementById('f-food-search').value = name;
+    document.getElementById('f-kcal-100g').value = kcal100;
+    const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+    document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+    const box = document.getElementById('food-results');
+    if (box) { box.innerHTML = ''; box.classList.remove('visible'); }
+    toast('Produto encontrado!');
+  } catch { toast('Erro ao pesquisar produto'); }
+}
+
+// ---- WEEK VIEW ----
+function renderWeekContent(now, tasks) {
+  const todayIdx = now.getDay();
   const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - ((todayIdx + 6) % 7)); // Monday
+  weekStart.setDate(now.getDate() - ((todayIdx + 6) % 7));
 
   const days = Array.from({length: 7}, (_, i) => {
     const d = new Date(weekStart);
@@ -171,7 +412,6 @@ function renderWeek() {
     return d;
   });
 
-  const tasks = DB.getTasks();
   const grid = days.map(d => {
     const dayN = d.getDay();
     const dateS = isoDate(d);
@@ -186,10 +426,10 @@ function renderWeek() {
   });
 
   let html = '<div class="week-outer"><div class="week-header"><div></div>';
-  days.forEach((d, i) => {
+  days.forEach(d => {
     const isToday = d.toDateString() === now.toDateString();
     html += `<div class="week-day-col">
-      <div class="week-day-name">${DAYS_SHORT[(d.getDay())]}</div>
+      <div class="week-day-name">${DAYS_SHORT[d.getDay()]}</div>
       <div class="day-num-circle${isToday ? ' today' : ''}">${d.getDate()}</div>
     </div>`;
   });
@@ -208,45 +448,9 @@ function renderWeek() {
     });
     html += '</div>';
   }
-
-  html += '</div>';
-  el.innerHTML = html;
+  return html + '</div>';
 }
 
-// ---- TASKS VIEW ----
-function renderTasks() {
-  const el = document.getElementById('tab-tasks');
-  let tasks = DB.getTasks();
-
-  if (filter.category !== 'all') tasks = tasks.filter(t => t.category === filter.category);
-  if (filter.priority !== 'all') tasks = tasks.filter(t => t.priority === filter.priority);
-
-  const priO = { high: 0, medium: 1, low: 2 };
-  tasks.sort((a, b) => {
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    return (priO[a.priority] ?? 1) - (priO[b.priority] ?? 1);
-  });
-
-  let html = '<div class="filters">';
-  html += chip('all', filter.category, 'Todas', "setFilter('category','all')");
-  Object.entries(CATS).forEach(([k, v]) =>
-    html += chip(k, filter.category, v.emoji + ' ' + v.label, `setFilter('category','${k}')`)
-  );
-  html += '</div><div class="filters" style="padding-top:0">';
-  html += chip('all', filter.priority, 'Todas', "setFilter('priority','all')");
-  Object.entries(PRIS).forEach(([k, v]) =>
-    html += chip(k, filter.priority, v.label, `setFilter('priority','${k}')`)
-  );
-  html += '</div>';
-
-  if (tasks.length === 0) {
-    html += emptyState('✅', 'Sem tarefas', 'Toca no + para criar a tua primeira tarefa.');
-  } else {
-    html += `<div class="section"><div class="card">${tasks.map(taskRow).join('')}</div></div>`;
-  }
-
-  el.innerHTML = html;
-}
 
 function taskRow(t) {
   const cat = CATS[t.category] || CATS.other;
@@ -271,15 +475,39 @@ function chip(val, active, label, onclick) {
 
 function setFilter(type, val) {
   filter[type] = val;
-  renderTasks();
+  renderDashboard();
 }
 
 // ---- SETTINGS VIEW ----
-function renderSettings() {
-  const el = document.getElementById('tab-settings');
+// ---- SETTINGS (opens in modal) ----
+function openSettings() {
+  modalMode = 'settings';
+  document.getElementById('modal-title').textContent = 'Definições';
+  document.getElementById('btn-save').style.display = 'none';
+  document.getElementById('btn-cancel').textContent = 'Fechar';
+  document.getElementById('modal-body').innerHTML = renderSettingsContent();
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function renderSettingsContent() {
   const s = DB.getSettings();
-  el.innerHTML = `
+  const g = DB.getGoals();
+  const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
+  return `
     <div class="section" style="margin-top:16px">
+      <div class="section-title">Metas diárias</div>
+      <div class="card">
+        <div class="settings-item" onclick="openGoals()">
+          <span class="settings-label">💧 Água</span>
+          <span class="settings-value">${goalWater} ›</span>
+        </div>
+        <div class="settings-item" onclick="openGoals()">
+          <span class="settings-label">🔥 Calorias</span>
+          <span class="settings-value">${g.calories} kcal ›</span>
+        </div>
+      </div>
+    </div>
+    <div class="section">
       <div class="section-title">Notificações</div>
       <div class="card">
         <div class="settings-item">
@@ -317,14 +545,47 @@ function renderSettings() {
     </div>`;
 }
 
+function openGoals() {
+  const g = DB.getGoals();
+  modalMode = 'goals';
+  document.getElementById('btn-save').style.display = '';
+  document.getElementById('btn-cancel').textContent = 'Cancelar';
+  document.getElementById('modal-title').textContent = 'Metas diárias';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">💧 Água (ml)</label>
+    <input class="form-input" id="f-goal-water" type="number" inputmode="numeric" value="${g.water}" min="100">
+    <label class="form-label">🔥 Calorias (kcal)</label>
+    <input class="form-input" id="f-goal-cal" type="number" inputmode="numeric" value="${g.calories}" min="100">
+  </div>`;
+  setTimeout(() => document.getElementById('f-goal-water')?.focus(), 100);
+}
+
+function saveGoals() {
+  const water = parseInt(document.getElementById('f-goal-water')?.value);
+  const calories = parseInt(document.getElementById('f-goal-cal')?.value);
+  if (isNaN(water) || water < 100) { toast('Meta de água inválida'); return; }
+  if (isNaN(calories) || calories < 100) { toast('Meta de calorias inválida'); return; }
+  DB.setGoals({ water, calories });
+  closeModal();
+  toast('Metas guardadas!');
+  renderDashboard();
+}
+
 // ---- MODAL ----
 function bindModal() {
   document.getElementById('btn-add').addEventListener('click', () => openAdd());
-  document.getElementById('btn-save').addEventListener('click', saveTask);
+  document.getElementById('btn-save').addEventListener('click', dispatchSave);
   document.getElementById('btn-cancel').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target.id === 'modal-overlay') closeModal();
   });
+}
+
+function dispatchSave() {
+  if (modalMode === 'task')    saveTask();
+  else if (modalMode === 'meal')  saveMeal();
+  else if (modalMode === 'water') saveWaterCustom();
+  else if (modalMode === 'goals') saveGoals();
 }
 
 function openAdd() {
@@ -436,7 +697,7 @@ function saveTask() {
     toast('Tarefa criada!');
   }
   closeModal();
-  render(activeTab);
+  renderDashboard();
 }
 
 function deleteTask(id) {
@@ -444,7 +705,7 @@ function deleteTask(id) {
   DB.setTasks(DB.getTasks().filter(t => t.id !== id));
   cancelTimer(id);
   closeModal();
-  render(activeTab);
+  renderDashboard();
   toast('Tarefa apagada');
 }
 
@@ -452,11 +713,15 @@ function toggleDone(e, id) {
   e.stopPropagation();
   const tasks = DB.getTasks();
   const i = tasks.findIndex(t => t.id === id);
-  if (i >= 0) { tasks[i].completed = !tasks[i].completed; DB.setTasks(tasks); render(activeTab); }
+  if (i >= 0) { tasks[i].completed = !tasks[i].completed; DB.setTasks(tasks); renderDashboard(); }
 }
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+  document.getElementById('btn-save').style.display = '';
+  document.getElementById('btn-cancel').textContent = 'Cancelar';
+  modalMode = 'task';
+  modalContext = null;
 }
 
 // ---- NOTIFICATIONS ----
@@ -484,7 +749,7 @@ async function toggleNotifs() {
     if (res === 'granted') { scheduleAll(); toast('Notificações ativas!'); }
     else toast('Permissão negada pelo sistema');
   }
-  renderSettings();
+  if (modalMode === 'settings') document.getElementById('modal-body').innerHTML = renderSettingsContent();
 }
 
 function scheduleTask(t) {
@@ -548,14 +813,18 @@ function exportJSON() {
 function importJSON(e) {
   const f = e.target.files[0];
   if (!f) return;
+  const existing = DB.getTasks();
   const r = new FileReader();
   r.onload = ev => {
     try {
       const d = JSON.parse(ev.target.result);
       if (Array.isArray(d.tasks)) {
+        if (existing.length > 0 && !confirm(`Importar ${d.tasks.length} tarefas? Os ${existing.length} dados atuais serão substituídos.`)) {
+          return;
+        }
         DB.setTasks(d.tasks);
         scheduleAll();
-        render(activeTab);
+        renderDashboard();
         toast(`${d.tasks.length} tarefas importadas!`);
       }
     } catch { toast('Erro ao importar'); }
@@ -568,7 +837,7 @@ function clearData() {
   if (!confirm('Apagar TODOS os dados? Esta ação é irreversível.')) return;
   localStorage.clear();
   Object.keys(timers).forEach(k => { clearTimeout(timers[k]); delete timers[k]; });
-  render(activeTab);
+  renderDashboard();
   toast('Dados apagados');
 }
 
