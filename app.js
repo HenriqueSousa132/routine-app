@@ -43,8 +43,9 @@ document.addEventListener('DOMContentLoaded', () => {
   registerSW();
   bindModal();
   document.getElementById('btn-settings').addEventListener('click', openSettings);
+  migrateOldData();
   renderDashboard();
-  askNotifications();
+  syncNotifState();
   scheduleAll();
   nowLineInterval = setInterval(drawNowLine, 60000);
   document.addEventListener('visibilitychange', () => {
@@ -61,6 +62,64 @@ document.addEventListener('DOMContentLoaded', () => {
 function registerSW() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+}
+
+// ---- DATA MIGRATION (old app → new app) ----
+function migrateOldData() {
+  if (DB.getTasks().length > 0) return; // already have data
+  const found = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key === 'tasks') continue;
+    try {
+      const val = JSON.parse(localStorage.getItem(key));
+      // detect arrays of task-like objects
+      if (Array.isArray(val) && val.length > 0 && val[0] && typeof val[0] === 'object') {
+        const sample = val[0];
+        if ('title' in sample || 'name' in sample || 'task' in sample || 'text' in sample) {
+          found.push({ key, data: val });
+        }
+      }
+      // detect objects that wrap a task array
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        const arr = val.tasks || val.items || val.list;
+        if (Array.isArray(arr) && arr.length > 0) {
+          found.push({ key, data: arr });
+        }
+      }
+    } catch {}
+  }
+  if (!found.length) return;
+
+  // normalise and import the best candidate (most items)
+  found.sort((a, b) => b.data.length - a.data.length);
+  const raw = found[0].data;
+  const migrated = raw.map(t => ({
+    id:        t.id || uid(),
+    title:     t.title || t.name || t.task || t.text || 'Tarefa importada',
+    category:  t.category || t.cat || 'personal',
+    priority:  t.priority || t.pri || 'medium',
+    days:      Array.isArray(t.days) ? t.days : [],
+    date:      t.date || t.dueDate || '',
+    startTime: t.startTime || t.time || t.start || '',
+    endTime:   t.endTime || t.end || '',
+    completed: !!(t.completed || t.done || t.checked),
+    createdAt: t.createdAt || new Date().toISOString(),
+    notification: true,
+  }));
+  DB.setTasks(migrated);
+  toast(`${migrated.length} tarefas recuperadas ✅`);
+}
+
+// ---- NOTIFICATION SYNC ----
+function syncNotifState() {
+  if (!('Notification' in window)) return;
+  const s = DB.getSettings();
+  const actual = Notification.permission === 'granted';
+  if (actual !== s.notifications) {
+    s.notifications = actual;
+    DB.setSettings(s);
   }
 }
 
@@ -514,6 +573,8 @@ function renderSettingsContent() {
           <span class="settings-label">Ativar Notificações</span>
           <button class="toggle${s.notifications ? ' on' : ''}" onclick="toggleNotifs()"></button>
         </div>
+        ${'Notification' in window && Notification.permission === 'denied' ? `
+        <div class="settings-hint">⚠️ Permissão bloqueada no browser. Vai às definições do browser → este site → Notificações → Permitir.</div>` : ''}
       </div>
     </div>
     <div class="section">
@@ -736,6 +797,10 @@ async function askNotifications() {
 }
 
 async function toggleNotifs() {
+  if (!('Notification' in window)) {
+    toast('Notificações não suportadas neste browser');
+    return;
+  }
   const s = DB.getSettings();
   if (s.notifications) {
     s.notifications = false;
@@ -743,11 +808,18 @@ async function toggleNotifs() {
     Object.keys(timers).forEach(k => { clearTimeout(timers[k]); delete timers[k]; });
     toast('Notificações desativadas');
   } else {
+    if (Notification.permission === 'denied') {
+      toast('Permissão bloqueada — activa nas definições do browser');
+      if (modalMode === 'settings') {
+        document.getElementById('modal-body').innerHTML = renderSettingsContent();
+      }
+      return;
+    }
     const res = await Notification.requestPermission();
     s.notifications = res === 'granted';
     DB.setSettings(s);
-    if (res === 'granted') { scheduleAll(); toast('Notificações ativas!'); }
-    else toast('Permissão negada pelo sistema');
+    if (res === 'granted') { scheduleAll(); toast('Notificações ativas! 🔔'); }
+    else toast('Permissão negada — activa nas definições do browser');
   }
   if (modalMode === 'settings') document.getElementById('modal-body').innerHTML = renderSettingsContent();
 }
