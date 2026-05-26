@@ -37,6 +37,7 @@ let timers = {};
 let nowLineInterval = null;
 let modalMode = 'task';
 let modalContext = null;
+let foodSearchTimer = null;
 
 // ---- Bootstrap ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -252,15 +253,32 @@ function saveWaterCustom() {
 function openAddMeal(date) {
   modalMode = 'meal';
   modalContext = { date };
+  const canScan = 'BarcodeDetector' in window;
   document.getElementById('modal-title').textContent = 'Adicionar Refeição';
   document.getElementById('modal-body').innerHTML = `<div class="form-group">
-    <label class="form-label">Nome</label>
-    <input class="form-input" id="f-meal-name" type="text" placeholder="ex: Almoço, Snack…" autocomplete="off">
-    <label class="form-label">Calorias (kcal)</label>
-    <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric" placeholder="ex: 500" min="0">
+    <label class="form-label">Pesquisar alimento</label>
+    <div class="food-search-row">
+      <input class="form-input food-search-input" id="f-food-search" type="text"
+             placeholder="ex: frango grelhado, arroz…" autocomplete="off"
+             oninput="onFoodSearch(this.value)">
+      ${canScan ? `<button class="food-scan-btn" onclick="scanBarcode()" title="Ler código de barras">📷</button>` : ''}
+    </div>
+    <div id="food-results" class="food-results"></div>
+
+    <label class="form-label">Nome da refeição</label>
+    <input class="form-input" id="f-meal-name" type="text" placeholder="Nome" autocomplete="off">
+
+    <label class="form-label">Porção e calorias</label>
+    <div class="form-row">
+      <input class="form-input" id="f-meal-portion" type="number" inputmode="numeric"
+             placeholder="Porção (g)" min="1" value="100" oninput="recalcKcal()">
+      <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric"
+             placeholder="Calorias (kcal)" min="0">
+    </div>
+    <input id="f-kcal-100g" type="hidden" value="">
   </div>`;
   document.getElementById('modal-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('f-meal-name')?.focus(), 100);
+  setTimeout(() => document.getElementById('f-food-search')?.focus(), 100);
 }
 
 function saveMeal() {
@@ -275,6 +293,108 @@ function saveMeal() {
   closeModal();
   toast('Refeição adicionada! 🔥');
   renderToday();
+}
+
+// ---- FOOD SEARCH (Open Food Facts) ----
+function onFoodSearch(q) {
+  clearTimeout(foodSearchTimer);
+  const box = document.getElementById('food-results');
+  if (!box) return;
+  if (!q || q.length < 2) { box.innerHTML = ''; box.classList.remove('visible'); return; }
+  box.innerHTML = '<div class="food-searching">A pesquisar…</div>';
+  box.classList.add('visible');
+  foodSearchTimer = setTimeout(() => fetchFoodSearch(q), 400);
+}
+
+async function fetchFoodSearch(q) {
+  const box = document.getElementById('food-results');
+  if (!box) return;
+  try {
+    const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms='
+      + encodeURIComponent(q)
+      + '&search_simple=1&action=process&json=1&fields=product_name,brands,nutriments&page_size=7';
+    const res = await fetch(url);
+    const data = await res.json();
+    const items = (data.products || []).filter(p =>
+      p.product_name && p.nutriments?.['energy-kcal_100g'] != null
+    ).slice(0, 6);
+    if (!items.length) {
+      box.innerHTML = '<div class="food-searching">Sem resultados — insere as kcal manualmente.</div>';
+      return;
+    }
+    box.innerHTML = items.map(p => {
+      const name = p.product_name;
+      const brand = p.brands ? ' · ' + p.brands.split(',')[0].trim() : '';
+      const kcal = Math.round(p.nutriments['energy-kcal_100g']);
+      return `<div class="food-result-item" data-name="${esc(name)}" data-kcal="${kcal}" onclick="selectFood(this)">
+        <span class="food-result-name">${esc(name)}<span class="food-result-brand">${esc(brand)}</span></span>
+        <span class="food-result-kcal">${kcal} kcal/100g</span>
+      </div>`;
+    }).join('');
+  } catch {
+    box.innerHTML = '<div class="food-searching">Sem ligação — insere as kcal manualmente.</div>';
+  }
+}
+
+function selectFood(el) {
+  const name = el.dataset.name;
+  const kcal100 = parseInt(el.dataset.kcal);
+  document.getElementById('f-meal-name').value = name;
+  document.getElementById('f-food-search').value = name;
+  document.getElementById('f-kcal-100g').value = kcal100;
+  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+  const box = document.getElementById('food-results');
+  box.innerHTML = '';
+  box.classList.remove('visible');
+}
+
+function recalcKcal() {
+  const kcal100 = parseInt(document.getElementById('f-kcal-100g')?.value);
+  if (!kcal100) return;
+  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+}
+
+async function scanBarcode() {
+  if (!('BarcodeDetector' in window)) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = 'environment';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+      const barcodes = await detector.detect(bitmap);
+      if (!barcodes.length) { toast('Código de barras não detectado'); return; }
+      toast('A pesquisar produto…');
+      await fetchByBarcode(barcodes[0].rawValue);
+    } catch { toast('Erro ao ler código de barras'); }
+  };
+  input.click();
+}
+
+async function fetchByBarcode(code) {
+  try {
+    const res = await fetch('https://world.openfoodfacts.org/api/v0/product/' + code + '.json');
+    const data = await res.json();
+    if (data.status !== 1) { toast('Produto não encontrado'); return; }
+    const p = data.product;
+    const kcal100 = Math.round(p.nutriments?.['energy-kcal_100g'] || 0);
+    const name = p.product_name_pt || p.product_name || code;
+    if (!kcal100) { toast('Produto sem informação nutricional'); return; }
+    document.getElementById('f-meal-name').value = name;
+    document.getElementById('f-food-search').value = name;
+    document.getElementById('f-kcal-100g').value = kcal100;
+    const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
+    document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+    const box = document.getElementById('food-results');
+    if (box) { box.innerHTML = ''; box.classList.remove('visible'); }
+    toast('Produto encontrado!');
+  } catch { toast('Erro ao pesquisar produto'); }
 }
 
 // ---- WEEK VIEW ----

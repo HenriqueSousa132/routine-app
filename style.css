@@ -560,6 +560,67 @@ body {
 .empty-title { font-size: 19px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .empty-text { font-size: 15px; line-height: 1.5; }
 
+/* Food search */
+.food-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.food-search-input { flex: 1; }
+
+.food-scan-btn {
+  width: 48px;
+  height: 48px;
+  background: var(--bg);
+  border: none;
+  border-radius: 10px;
+  font-size: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.food-scan-btn:active { opacity: 0.7; }
+
+.food-results {
+  display: none;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-top: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  border: 1px solid var(--separator);
+}
+.food-results.visible { display: block; }
+
+.food-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--separator);
+  cursor: pointer;
+  user-select: none;
+}
+.food-result-item:last-child { border-bottom: none; }
+.food-result-item:active { background: var(--active-bg); }
+
+.food-result-name {
+  font-size: 14px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.food-result-brand { font-size: 11px; color: var(--muted); }
+.food-result-kcal { font-size: 12px; color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.food-searching { padding: 12px 14px; color: var(--muted); font-size: 13px; }
+
 /* Health widgets */
 .health-widgets {
   display: grid;
