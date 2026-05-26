@@ -560,6 +560,135 @@ body {
 .empty-title { font-size: 19px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .empty-text { font-size: 15px; line-height: 1.5; }
 
+/* Health widgets */
+.health-widgets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 16px 12px;
+}
+
+.health-card {
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.health-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.health-card-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+
+.health-card-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.health-card-goal {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.health-progress {
+  height: 6px;
+  background: var(--separator);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 2px 0 6px;
+}
+
+.health-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.water-fill { background: #30b5f5; }
+.cal-fill   { background: var(--warning); }
+.cal-fill.over { background: var(--danger); }
+
+.water-btns {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.water-btn {
+  flex: 1;
+  padding: 5px 2px;
+  background: rgba(48,181,245,0.12);
+  color: #30b5f5;
+  border: none;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.water-btn:active { opacity: 0.7; }
+.water-btn-edit { background: rgba(142,142,147,0.12); color: var(--muted); }
+
+.cal-btn {
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px;
+  background: rgba(255,149,0,0.12);
+  color: var(--warning);
+  border: none;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+}
+.cal-btn:active { opacity: 0.7; }
+
+.meal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0;
+}
+
+.meal-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text);
+  gap: 4px;
+}
+.meal-item span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.meal-kcal {
+  color: var(--muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.meal-kcal::after { content: ' kcal'; }
+
 /* Toast */
 .toast {
   position: fixed;

@@ -23,6 +23,10 @@ const DB = {
   setTasks:    v  => localStorage.setItem('tasks', JSON.stringify(v)),
   getSettings: () => JSON.parse(localStorage.getItem('settings') || '{"notifications":false}'),
   setSettings: v  => localStorage.setItem('settings', JSON.stringify(v)),
+  getHealth:   d  => JSON.parse(localStorage.getItem('health_' + d) || '{"water":0,"meals":[]}'),
+  setHealth:   (d,v) => localStorage.setItem('health_' + d, JSON.stringify(v)),
+  getGoals:    () => JSON.parse(localStorage.getItem('goals') || '{"water":2000,"calories":2000}'),
+  setGoals:    v  => localStorage.setItem('goals', JSON.stringify(v)),
 };
 
 // ---- State ----
@@ -31,6 +35,8 @@ let filter = { category: 'all', priority: 'all' };
 let editId = null;
 let timers = {};
 let nowLineInterval = null;
+let modalMode = 'task';
+let modalContext = null;
 
 // ---- Bootstrap ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -111,6 +117,8 @@ function renderToday() {
     <div class="today-weekday">${DAYS_LONG[todayIdx]}</div>
   </div>`;
 
+  html += renderHealthWidgets(todayDate);
+
   if (isIOS && !isStandalone) {
     html += `<div class="banner">📱 Para notificações no iPhone, adiciona ao Ecrã Inicial: Partilhar → "Adicionar ao Ecrã Inicial".</div>`;
   }
@@ -169,6 +177,104 @@ function drawNowLine() {
   ind.innerHTML = '<div class="now-dot"></div><div class="now-line"></div>';
   tl.style.position = 'relative';
   tl.appendChild(ind);
+}
+
+// ---- HEALTH WIDGETS ----
+function renderHealthWidgets(date) {
+  const h = DB.getHealth(date);
+  const g = DB.getGoals();
+
+  const waterPct = Math.min(100, h.water / g.water * 100);
+  const totalKcal = h.meals.reduce((s, m) => s + m.kcal, 0);
+  const calPct = Math.min(100, totalKcal / g.calories * 100);
+  const calOver = totalKcal > g.calories;
+
+  const waterLabel = h.water >= 1000
+    ? (h.water / 1000).toFixed(1).replace(/\.0$/, '') + ' L'
+    : h.water + ' ml';
+  const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
+
+  const recentMeals = h.meals.slice(-3).map(m =>
+    `<div class="meal-item"><span>${esc(m.name)}</span><span class="meal-kcal">${m.kcal}</span></div>`
+  ).join('');
+
+  return `<div class="health-widgets">
+    <div class="health-card">
+      <div class="health-card-title">💧 Água</div>
+      <div class="health-card-value">${waterLabel}</div>
+      <div class="health-card-goal">meta: ${goalWater}</div>
+      <div class="health-progress"><div class="health-progress-fill water-fill" style="width:${waterPct}%"></div></div>
+      <div class="water-btns">
+        <button class="water-btn" onclick="addWater(150,'${date}')">+150</button>
+        <button class="water-btn" onclick="addWater(250,'${date}')">+250</button>
+        <button class="water-btn" onclick="addWater(500,'${date}')">+500</button>
+        <button class="water-btn water-btn-edit" onclick="openWaterCustom('${date}')">✎</button>
+      </div>
+    </div>
+    <div class="health-card">
+      <div class="health-card-title">🔥 Calorias</div>
+      <div class="health-card-value">${totalKcal} <span class="health-card-unit">kcal</span></div>
+      <div class="health-card-goal">meta: ${g.calories} kcal</div>
+      <div class="health-progress"><div class="health-progress-fill cal-fill${calOver ? ' over' : ''}" style="width:${calPct}%"></div></div>
+      ${recentMeals ? `<div class="meal-list">${recentMeals}</div>` : ''}
+      <button class="cal-btn" onclick="openAddMeal('${date}')">+ Refeição</button>
+    </div>
+  </div>`;
+}
+
+function addWater(ml, date) {
+  const h = DB.getHealth(date);
+  h.water = (h.water || 0) + ml;
+  DB.setHealth(date, h);
+  toast(`+${ml} ml 💧`);
+  renderToday();
+}
+
+function openWaterCustom(date) {
+  modalMode = 'water';
+  modalContext = { date };
+  document.getElementById('modal-title').textContent = 'Adicionar Água';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">Quantidade (ml)</label>
+    <input class="form-input" id="f-water-ml" type="number" inputmode="numeric" placeholder="ex: 330" min="1">
+  </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-water-ml')?.focus(), 100);
+}
+
+function saveWaterCustom() {
+  const ml = parseInt(document.getElementById('f-water-ml')?.value);
+  if (isNaN(ml) || ml <= 0) { toast('Valor inválido'); return; }
+  closeModal();
+  addWater(ml, modalContext?.date || isoDate(new Date()));
+}
+
+function openAddMeal(date) {
+  modalMode = 'meal';
+  modalContext = { date };
+  document.getElementById('modal-title').textContent = 'Adicionar Refeição';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">Nome</label>
+    <input class="form-input" id="f-meal-name" type="text" placeholder="ex: Almoço, Snack…" autocomplete="off">
+    <label class="form-label">Calorias (kcal)</label>
+    <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric" placeholder="ex: 500" min="0">
+  </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-meal-name')?.focus(), 100);
+}
+
+function saveMeal() {
+  const name = document.getElementById('f-meal-name')?.value.trim();
+  const kcal = parseInt(document.getElementById('f-meal-kcal')?.value);
+  if (!name) { toast('Adiciona o nome da refeição!'); return; }
+  if (isNaN(kcal) || kcal < 0) { toast('Calorias inválidas!'); return; }
+  const date = modalContext?.date || isoDate(new Date());
+  const h = DB.getHealth(date);
+  h.meals.push({ id: uid(), name, kcal, time: new Date().toTimeString().slice(0, 5) });
+  DB.setHealth(date, h);
+  closeModal();
+  toast('Refeição adicionada! 🔥');
+  renderToday();
 }
 
 // ---- WEEK VIEW ----
@@ -293,8 +399,23 @@ function setFilter(type, val) {
 function renderSettings() {
   const el = document.getElementById('tab-settings');
   const s = DB.getSettings();
+  const g = DB.getGoals();
+  const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
   el.innerHTML = `
     <div class="section" style="margin-top:16px">
+      <div class="section-title">Metas diárias</div>
+      <div class="card">
+        <div class="settings-item" onclick="openGoals()">
+          <span class="settings-label">💧 Água</span>
+          <span class="settings-value">${goalWater} ›</span>
+        </div>
+        <div class="settings-item" onclick="openGoals()">
+          <span class="settings-label">🔥 Calorias</span>
+          <span class="settings-value">${g.calories} kcal ›</span>
+        </div>
+      </div>
+    </div>
+    <div class="section">
       <div class="section-title">Notificações</div>
       <div class="card">
         <div class="settings-item">
@@ -332,14 +453,46 @@ function renderSettings() {
     </div>`;
 }
 
+function openGoals() {
+  const g = DB.getGoals();
+  modalMode = 'goals';
+  document.getElementById('modal-title').textContent = 'Metas diárias';
+  document.getElementById('modal-body').innerHTML = `<div class="form-group">
+    <label class="form-label">💧 Água (ml)</label>
+    <input class="form-input" id="f-goal-water" type="number" inputmode="numeric" value="${g.water}" min="100">
+    <label class="form-label">🔥 Calorias (kcal)</label>
+    <input class="form-input" id="f-goal-cal" type="number" inputmode="numeric" value="${g.calories}" min="100">
+  </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f-goal-water')?.focus(), 100);
+}
+
+function saveGoals() {
+  const water = parseInt(document.getElementById('f-goal-water')?.value);
+  const calories = parseInt(document.getElementById('f-goal-cal')?.value);
+  if (isNaN(water) || water < 100) { toast('Meta de água inválida'); return; }
+  if (isNaN(calories) || calories < 100) { toast('Meta de calorias inválida'); return; }
+  DB.setGoals({ water, calories });
+  closeModal();
+  toast('Metas guardadas!');
+  renderSettings();
+}
+
 // ---- MODAL ----
 function bindModal() {
   document.getElementById('btn-add').addEventListener('click', () => openAdd());
-  document.getElementById('btn-save').addEventListener('click', saveTask);
+  document.getElementById('btn-save').addEventListener('click', dispatchSave);
   document.getElementById('btn-cancel').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target.id === 'modal-overlay') closeModal();
   });
+}
+
+function dispatchSave() {
+  if (modalMode === 'task')    saveTask();
+  else if (modalMode === 'meal')  saveMeal();
+  else if (modalMode === 'water') saveWaterCustom();
+  else if (modalMode === 'goals') saveGoals();
 }
 
 function openAdd() {
@@ -472,6 +625,8 @@ function toggleDone(e, id) {
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+  modalMode = 'task';
+  modalContext = null;
 }
 
 // ---- NOTIFICATIONS ----
