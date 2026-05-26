@@ -30,7 +30,6 @@ const DB = {
 };
 
 // ---- State ----
-let activeTab = 'today';
 let filter = { category: 'all', priority: 'all' };
 let editId = null;
 let timers = {};
@@ -42,9 +41,9 @@ let foodSearchTimer = null;
 // ---- Bootstrap ----
 document.addEventListener('DOMContentLoaded', () => {
   registerSW();
-  bindNav();
   bindModal();
-  renderToday();
+  document.getElementById('btn-settings').addEventListener('click', openSettings);
+  renderDashboard();
   askNotifications();
   scheduleAll();
   nowLineInterval = setInterval(drawNowLine, 60000);
@@ -65,88 +64,92 @@ function registerSW() {
   }
 }
 
-// ---- Navigation ----
-function bindNav() {
-  document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      document.getElementById('page-title').textContent = btn.dataset.title;
-      activeTab = btn.dataset.tab;
-      render(activeTab);
-    });
-  });
-}
-
-function render(tab) {
-  if (tab === 'today')    renderToday();
-  else if (tab === 'week')     renderWeek();
-  else if (tab === 'tasks')    renderTasks();
-  else if (tab === 'settings') renderSettings();
-}
-
-// ---- TODAY VIEW ----
-function renderToday() {
-  const el = document.getElementById('tab-today');
+// ---- DASHBOARD ----
+function renderDashboard() {
+  const el = document.getElementById('dashboard');
   const now = new Date();
   const todayIdx = now.getDay();
   const todayDate = isoDate(now);
 
-  const items = DB.getTasks().filter(t =>
-    (t.date && t.date === todayDate) ||
-    (t.days && t.days.includes(todayIdx))
-  );
+  document.getElementById('page-title').textContent = now.getDate() + ' ' + MONTHS[now.getMonth()];
+  document.getElementById('page-weekday').textContent = DAYS_LONG[todayIdx];
 
+  const allTasks = DB.getTasks();
+  const todayTasks = allTasks.filter(t =>
+    (t.date && t.date === todayDate) || (t.days && t.days.includes(todayIdx))
+  );
   const byHour = {};
   const unscheduled = [];
-  items.forEach(t => {
-    if (t.startTime) {
-      const h = +t.startTime.split(':')[0];
-      (byHour[h] = byHour[h] || []).push(t);
-    } else {
-      unscheduled.push(t);
-    }
+  todayTasks.forEach(t => {
+    if (t.startTime) { const h = +t.startTime.split(':')[0]; (byHour[h] = byHour[h] || []).push(t); }
+    else unscheduled.push(t);
   });
+
+  let html = '';
+
+  // Health
+  html += renderHealthWidgets(todayDate);
 
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-
-  let html = `<div class="today-header">
-    <div class="today-date">${now.getDate()} ${MONTHS[now.getMonth()]}</div>
-    <div class="today-weekday">${DAYS_LONG[todayIdx]}</div>
-  </div>`;
-
-  html += renderHealthWidgets(todayDate);
-
   if (isIOS && !isStandalone) {
-    html += `<div class="banner">📱 Para notificações no iPhone, adiciona ao Ecrã Inicial: Partilhar → "Adicionar ao Ecrã Inicial".</div>`;
+    html += `<div class="banner" style="margin-bottom:0">📱 Adiciona ao Ecrã Inicial para activar notificações.</div>`;
   }
 
-  if (items.length === 0) {
-    html += emptyState('☀️', 'Dia livre!', 'Toca no + para adicionar uma tarefa ou bloco de rotina.');
+  // Agenda
+  html += `<div class="section" style="margin-top:20px"><div class="section-title">Agenda de hoje</div>`;
+  const scheduledHours = Object.keys(byHour).map(Number);
+  if (scheduledHours.length) {
+    const minH = Math.max(0, Math.min(...scheduledHours) - 1);
+    const maxH = Math.min(23, Math.max(...scheduledHours) + 1);
+    html += '<div class="timeline" id="timeline">';
+    for (let h = minH; h <= maxH; h++) {
+      const evs = byHour[h] || [];
+      html += `<div class="timeline-slot" data-hour="${h}">
+        <div class="timeline-hour">${pad(h)}:00</div>
+        <div class="timeline-line"></div>
+        <div class="timeline-events">${evs.map(eventBlock).join('')}</div>
+      </div>`;
+    }
+    html += '</div>';
   } else {
-    const scheduledHours = Object.keys(byHour).map(Number);
-    if (scheduledHours.length) {
-      const minH = Math.max(0, Math.min(...scheduledHours) - 1);
-      const maxH = Math.min(23, Math.max(...scheduledHours) + 1);
-      html += '<div class="timeline" id="timeline">';
-      for (let h = minH; h <= maxH; h++) {
-        const evs = byHour[h] || [];
-        html += `<div class="timeline-slot" data-hour="${h}">
-          <div class="timeline-hour">${pad(h)}:00</div>
-          <div class="timeline-line"></div>
-          <div class="timeline-events">${evs.map(eventBlock).join('')}</div>
-        </div>`;
-      }
-      html += '</div>';
-    }
-
-    if (unscheduled.length) {
-      html += `<div class="section" style="margin-top:12px"><div class="section-title">Sem horário</div><div class="card">${unscheduled.map(taskRow).join('')}</div></div>`;
-    }
+    html += `<p class="ds-empty-text">Sem eventos agendados para hoje.</p>`;
   }
+  if (unscheduled.length) {
+    html += `<div class="card" style="margin-top:8px">${unscheduled.map(taskRow).join('')}</div>`;
+  }
+  html += '</div>';
+
+  // Tasks
+  let tasks = allTasks;
+  if (filter.category !== 'all') tasks = tasks.filter(t => t.category === filter.category);
+  if (filter.priority !== 'all') tasks = tasks.filter(t => t.priority === filter.priority);
+  const priO = { high: 0, medium: 1, low: 2 };
+  tasks.sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    return (priO[a.priority] ?? 1) - (priO[b.priority] ?? 1);
+  });
+  html += `<div class="section"><div class="section-title">Tarefas</div>
+    <div class="filters">`;
+  html += chip('all', filter.category, 'Todas', "setFilter('category','all')");
+  Object.entries(CATS).forEach(([k, v]) =>
+    html += chip(k, filter.category, v.emoji + ' ' + v.label, `setFilter('category','${k}')`)
+  );
+  html += `</div><div class="filters" style="padding-top:0">`;
+  html += chip('all', filter.priority, 'Todas', "setFilter('priority','all')");
+  Object.entries(PRIS).forEach(([k, v]) =>
+    html += chip(k, filter.priority, v.label, `setFilter('priority','${k}')`)
+  );
+  html += '</div>';
+  if (tasks.length === 0) {
+    html += emptyState('✅', 'Sem tarefas', 'Toca no + para criar a tua primeira tarefa.');
+  } else {
+    html += `<div class="card">${tasks.map(taskRow).join('')}</div>`;
+  }
+  html += '</div>';
+
+  // Week
+  html += `<div class="section"><div class="section-title">Esta semana</div>${renderWeekContent(now, allTasks)}</div>`;
 
   el.innerHTML = html;
   drawNowLine();
@@ -228,7 +231,7 @@ function addWater(ml, date) {
   h.water = (h.water || 0) + ml;
   DB.setHealth(date, h);
   toast(`+${ml} ml 💧`);
-  renderToday();
+  renderDashboard();
 }
 
 function openWaterCustom(date) {
@@ -292,7 +295,7 @@ function saveMeal() {
   DB.setHealth(date, h);
   closeModal();
   toast('Refeição adicionada! 🔥');
-  renderToday();
+  renderDashboard();
 }
 
 // ---- FOOD SEARCH (Open Food Facts) ----
@@ -398,13 +401,10 @@ async function fetchByBarcode(code) {
 }
 
 // ---- WEEK VIEW ----
-function renderWeek() {
-  const el = document.getElementById('tab-week');
-  const now = new Date();
+function renderWeekContent(now, tasks) {
   const todayIdx = now.getDay();
-
   const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - ((todayIdx + 6) % 7)); // Monday
+  weekStart.setDate(now.getDate() - ((todayIdx + 6) % 7));
 
   const days = Array.from({length: 7}, (_, i) => {
     const d = new Date(weekStart);
@@ -412,7 +412,6 @@ function renderWeek() {
     return d;
   });
 
-  const tasks = DB.getTasks();
   const grid = days.map(d => {
     const dayN = d.getDay();
     const dateS = isoDate(d);
@@ -427,10 +426,10 @@ function renderWeek() {
   });
 
   let html = '<div class="week-outer"><div class="week-header"><div></div>';
-  days.forEach((d, i) => {
+  days.forEach(d => {
     const isToday = d.toDateString() === now.toDateString();
     html += `<div class="week-day-col">
-      <div class="week-day-name">${DAYS_SHORT[(d.getDay())]}</div>
+      <div class="week-day-name">${DAYS_SHORT[d.getDay()]}</div>
       <div class="day-num-circle${isToday ? ' today' : ''}">${d.getDate()}</div>
     </div>`;
   });
@@ -449,45 +448,9 @@ function renderWeek() {
     });
     html += '</div>';
   }
-
-  html += '</div>';
-  el.innerHTML = html;
+  return html + '</div>';
 }
 
-// ---- TASKS VIEW ----
-function renderTasks() {
-  const el = document.getElementById('tab-tasks');
-  let tasks = DB.getTasks();
-
-  if (filter.category !== 'all') tasks = tasks.filter(t => t.category === filter.category);
-  if (filter.priority !== 'all') tasks = tasks.filter(t => t.priority === filter.priority);
-
-  const priO = { high: 0, medium: 1, low: 2 };
-  tasks.sort((a, b) => {
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    return (priO[a.priority] ?? 1) - (priO[b.priority] ?? 1);
-  });
-
-  let html = '<div class="filters">';
-  html += chip('all', filter.category, 'Todas', "setFilter('category','all')");
-  Object.entries(CATS).forEach(([k, v]) =>
-    html += chip(k, filter.category, v.emoji + ' ' + v.label, `setFilter('category','${k}')`)
-  );
-  html += '</div><div class="filters" style="padding-top:0">';
-  html += chip('all', filter.priority, 'Todas', "setFilter('priority','all')");
-  Object.entries(PRIS).forEach(([k, v]) =>
-    html += chip(k, filter.priority, v.label, `setFilter('priority','${k}')`)
-  );
-  html += '</div>';
-
-  if (tasks.length === 0) {
-    html += emptyState('✅', 'Sem tarefas', 'Toca no + para criar a tua primeira tarefa.');
-  } else {
-    html += `<div class="section"><div class="card">${tasks.map(taskRow).join('')}</div></div>`;
-  }
-
-  el.innerHTML = html;
-}
 
 function taskRow(t) {
   const cat = CATS[t.category] || CATS.other;
@@ -512,16 +475,25 @@ function chip(val, active, label, onclick) {
 
 function setFilter(type, val) {
   filter[type] = val;
-  renderTasks();
+  renderDashboard();
 }
 
 // ---- SETTINGS VIEW ----
-function renderSettings() {
-  const el = document.getElementById('tab-settings');
+// ---- SETTINGS (opens in modal) ----
+function openSettings() {
+  modalMode = 'settings';
+  document.getElementById('modal-title').textContent = 'Definições';
+  document.getElementById('btn-save').style.display = 'none';
+  document.getElementById('btn-cancel').textContent = 'Fechar';
+  document.getElementById('modal-body').innerHTML = renderSettingsContent();
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function renderSettingsContent() {
   const s = DB.getSettings();
   const g = DB.getGoals();
   const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
-  el.innerHTML = `
+  return `
     <div class="section" style="margin-top:16px">
       <div class="section-title">Metas diárias</div>
       <div class="card">
@@ -576,6 +548,8 @@ function renderSettings() {
 function openGoals() {
   const g = DB.getGoals();
   modalMode = 'goals';
+  document.getElementById('btn-save').style.display = '';
+  document.getElementById('btn-cancel').textContent = 'Cancelar';
   document.getElementById('modal-title').textContent = 'Metas diárias';
   document.getElementById('modal-body').innerHTML = `<div class="form-group">
     <label class="form-label">💧 Água (ml)</label>
@@ -583,7 +557,6 @@ function openGoals() {
     <label class="form-label">🔥 Calorias (kcal)</label>
     <input class="form-input" id="f-goal-cal" type="number" inputmode="numeric" value="${g.calories}" min="100">
   </div>`;
-  document.getElementById('modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-goal-water')?.focus(), 100);
 }
 
@@ -595,7 +568,7 @@ function saveGoals() {
   DB.setGoals({ water, calories });
   closeModal();
   toast('Metas guardadas!');
-  renderSettings();
+  renderDashboard();
 }
 
 // ---- MODAL ----
@@ -724,7 +697,7 @@ function saveTask() {
     toast('Tarefa criada!');
   }
   closeModal();
-  render(activeTab);
+  renderDashboard();
 }
 
 function deleteTask(id) {
@@ -732,7 +705,7 @@ function deleteTask(id) {
   DB.setTasks(DB.getTasks().filter(t => t.id !== id));
   cancelTimer(id);
   closeModal();
-  render(activeTab);
+  renderDashboard();
   toast('Tarefa apagada');
 }
 
@@ -740,11 +713,13 @@ function toggleDone(e, id) {
   e.stopPropagation();
   const tasks = DB.getTasks();
   const i = tasks.findIndex(t => t.id === id);
-  if (i >= 0) { tasks[i].completed = !tasks[i].completed; DB.setTasks(tasks); render(activeTab); }
+  if (i >= 0) { tasks[i].completed = !tasks[i].completed; DB.setTasks(tasks); renderDashboard(); }
 }
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+  document.getElementById('btn-save').style.display = '';
+  document.getElementById('btn-cancel').textContent = 'Cancelar';
   modalMode = 'task';
   modalContext = null;
 }
@@ -774,7 +749,7 @@ async function toggleNotifs() {
     if (res === 'granted') { scheduleAll(); toast('Notificações ativas!'); }
     else toast('Permissão negada pelo sistema');
   }
-  renderSettings();
+  if (modalMode === 'settings') document.getElementById('modal-body').innerHTML = renderSettingsContent();
 }
 
 function scheduleTask(t) {
@@ -849,7 +824,7 @@ function importJSON(e) {
         }
         DB.setTasks(d.tasks);
         scheduleAll();
-        render(activeTab);
+        renderDashboard();
         toast(`${d.tasks.length} tarefas importadas!`);
       }
     } catch { toast('Erro ao importar'); }
@@ -862,7 +837,7 @@ function clearData() {
   if (!confirm('Apagar TODOS os dados? Esta ação é irreversível.')) return;
   localStorage.clear();
   Object.keys(timers).forEach(k => { clearTimeout(timers[k]); delete timers[k]; });
-  render(activeTab);
+  renderDashboard();
   toast('Dados apagados');
 }
 
