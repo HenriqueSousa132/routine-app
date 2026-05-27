@@ -17,9 +17,32 @@ const DAYS_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const DAYS_LONG  = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const MONTHS    = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 
+// Map from any day string the old app might have used → 0-6
+const DAY_STR_MAP = {
+  sun:0, dom:0, domingo:0,
+  mon:1, seg:1, segunda:1,
+  tue:2, ter:2, terca:2, 'terça':2,
+  wed:3, qua:3, quarta:3,
+  thu:4, qui:4, quinta:4,
+  fri:5, sex:5, sexta:5,
+  sat:6, sab:6, 'sáb':6, sabado:6, 'sábado':6
+};
+
+function normDays(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(d => {
+    if (typeof d === 'number') return d;
+    if (typeof d === 'string') {
+      const n = DAY_STR_MAP[d.toLowerCase().trim()];
+      return n !== undefined ? n : null;
+    }
+    return null;
+  }).filter(d => d !== null);
+}
+
 // ---- Storage ----
 const DB = {
-  getTasks:    () => JSON.parse(localStorage.getItem('tasks')    || '[]'),
+  getTasks:    () => JSON.parse(localStorage.getItem('tasks') || '[]').map(t => ({ ...t, days: normDays(t.days) })),
   setTasks:    v  => localStorage.setItem('tasks', JSON.stringify(v)),
   getSettings: () => JSON.parse(localStorage.getItem('settings') || '{"notifications":false}'),
   setSettings: v  => localStorage.setItem('settings', JSON.stringify(v)),
@@ -100,7 +123,7 @@ function migrateOldData() {
     title:     t.title || t.name || t.task || t.text || 'Tarefa importada',
     category:  t.category || t.cat || 'personal',
     priority:  t.priority || t.pri || 'medium',
-    days:      Array.isArray(t.days) ? t.days : [],
+    days:      normDays(t.days || t.weekDays || t.recurDays || t.repeat),
     date:      t.date || t.dueDate || '',
     startTime: t.startTime || t.time || t.start || '',
     endTime:   t.endTime || t.end || '',
