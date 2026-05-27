@@ -404,6 +404,12 @@ body {
 .settings-value { font-size: 14px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
 .settings-hint { font-size: 12px; color: var(--warning); padding: 8px 16px 12px; line-height: 1.5; }
 
+.diag-table { background: var(--bg); border-radius: 10px; padding: 8px 12px; }
+.diag-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--separator); font-size: 12px; gap: 8px; }
+.diag-row:last-child { border-bottom: none; }
+.diag-row code { color: var(--accent); word-break: break-all; }
+.diag-row span { color: var(--muted); flex-shrink: 0; }
+
 .toggle {
   width: 51px;
   height: 31px;

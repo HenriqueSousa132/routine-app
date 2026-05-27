@@ -598,6 +598,10 @@ function renderSettingsContent() {
           <span class="settings-label">Versão</span>
           <span class="settings-value">1.0.0</span>
         </div>
+        <div class="settings-item" onclick="openStorageDiag()" style="cursor:pointer">
+          <span class="settings-label">Recuperar dados antigos</span>
+          <span class="settings-value">›</span>
+        </div>
         <div class="settings-item" onclick="clearData()" style="cursor:pointer">
           <span class="settings-label" style="color:var(--danger)">Limpar todos os dados</span>
           <span class="settings-value">›</span>
@@ -630,6 +634,81 @@ function saveGoals() {
   closeModal();
   toast('Metas guardadas!');
   renderDashboard();
+}
+
+function openStorageDiag() {
+  // collect all localStorage entries
+  const entries = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    let val;
+    try { val = JSON.parse(localStorage.getItem(k)); } catch { val = localStorage.getItem(k); }
+    entries.push({ k, val });
+  }
+
+  // find candidates: arrays of objects that look like tasks
+  const candidates = entries.filter(({ val }) => {
+    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object') {
+      const s = val[0];
+      return 'title' in s || 'name' in s || 'task' in s || 'text' in s || 'label' in s;
+    }
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const arr = val.tasks || val.items || val.list || val.data;
+      return Array.isArray(arr) && arr.length > 0;
+    }
+    return false;
+  });
+
+  const keySummary = entries.map(({ k, val }) => {
+    const size = Array.isArray(val) ? val.length + ' itens' : typeof val === 'object' ? 'objeto' : String(val).slice(0, 30);
+    return `<div class="diag-row"><code>${esc(k)}</code><span>${esc(size)}</span></div>`;
+  }).join('') || '<p style="color:var(--muted);padding:12px">Nenhum dado encontrado no browser.</p>';
+
+  const importBtns = candidates.map(({ k, val }) => {
+    const arr = Array.isArray(val) ? val : (val.tasks || val.items || val.list || val.data);
+    return `<button class="chip" style="margin:4px" onclick="importFromKey('${esc(k)}')">${esc(k)} (${arr.length} itens)</button>`;
+  }).join('');
+
+  modalMode = 'diag';
+  document.getElementById('btn-save').style.display = 'none';
+  document.getElementById('btn-cancel').textContent = 'Fechar';
+  document.getElementById('modal-title').textContent = 'Recuperar dados';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-group">
+      ${candidates.length ? `
+        <p style="font-size:14px;margin-bottom:12px">Encontrei possíveis tarefas nestes dados:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px">${importBtns}</div>
+      ` : '<p style="font-size:14px;color:var(--muted);margin-bottom:16px">Não encontrei tarefas de apps anteriores.</p>'}
+      <label class="form-label">Todos os dados guardados</label>
+      <div class="diag-table">${keySummary}</div>
+    </div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function importFromKey(key) {
+  try {
+    let val = JSON.parse(localStorage.getItem(key));
+    const arr = Array.isArray(val) ? val : (val.tasks || val.items || val.list || val.data || []);
+    if (!arr.length) { toast('Sem dados nesta chave'); return; }
+    const migrated = arr.map(t => ({
+      id:        t.id || uid(),
+      title:     t.title || t.name || t.task || t.text || t.label || 'Tarefa importada',
+      category:  t.category || t.cat || 'personal',
+      priority:  t.priority || t.pri || 'medium',
+      days:      Array.isArray(t.days) ? t.days : [],
+      date:      t.date || t.dueDate || '',
+      startTime: t.startTime || t.time || t.start || '',
+      endTime:   t.endTime || t.end || '',
+      completed: !!(t.completed || t.done || t.checked),
+      createdAt: t.createdAt || new Date().toISOString(),
+      notification: true,
+    }));
+    const existing = DB.getTasks();
+    DB.setTasks([...existing, ...migrated]);
+    closeModal();
+    renderDashboard();
+    toast(`${migrated.length} tarefas importadas! ✅`);
+  } catch { toast('Erro ao importar'); }
 }
 
 // ---- MODAL ----
