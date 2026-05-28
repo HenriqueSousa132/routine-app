@@ -17,6 +17,61 @@ const DAYS_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const DAYS_LONG  = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 const MONTHS    = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 
+// 4-day Upper/Lower program — 0=Dom,1=Seg,2=Ter,3=Qua,4=Qui,5=Sex,6=Sáb
+const WORKOUT_PROGRAM = {
+  1: {
+    name: 'Upper — Força', type: 'strength',
+    exercises: [
+      { id: 'a1', name: 'Supino plano',        sets: 4, reps: '5',        rest: '3 min' },
+      { id: 'a2', name: 'Remada barra',        sets: 4, reps: '5',        rest: '3 min' },
+      { id: 'a3', name: 'Press militar',       sets: 3, reps: '6–8',      rest: '2 min' },
+      { id: 'a4', name: 'Pulldown/Dominadas',  sets: 3, reps: '6–8',      rest: '2 min' },
+    ]
+  },
+  2: {
+    name: 'Lower — Força', type: 'strength',
+    exercises: [
+      { id: 'b1', name: 'Agachamento',         sets: 4, reps: '5',        rest: '3 min' },
+      { id: 'b2', name: 'Peso morto romeno',   sets: 3, reps: '6',        rest: '3 min' },
+      { id: 'b3', name: 'Leg press',           sets: 3, reps: '8',        rest: '2 min' },
+      { id: 'b4', name: 'Prancha',             sets: 3, reps: '45s',      rest: '1 min' },
+    ]
+  },
+  3: {
+    name: 'Cardio', type: 'cardio',
+    exercises: [
+      { id: 'c1', name: 'Caminhada rápida',    sets: 1, reps: '35–45 min', rest: '' },
+    ]
+  },
+  4: {
+    name: 'Upper — Volume', type: 'strength',
+    exercises: [
+      { id: 'd1', name: 'Supino inclinado',    sets: 4, reps: '8–10',     rest: '2 min' },
+      { id: 'd2', name: 'Remada haltere',      sets: 4, reps: '10–12',    rest: '2 min' },
+      { id: 'd3', name: 'Elevações laterais',  sets: 3, reps: '12–15',    rest: '1 min' },
+      { id: 'd4', name: 'Curl bíceps',         sets: 3, reps: '12',       rest: '1 min' },
+      { id: 'd5', name: 'Tríceps corda',       sets: 3, reps: '12',       rest: '1 min' },
+    ]
+  },
+  5: {
+    name: 'Lower — Volume', type: 'strength',
+    exercises: [
+      { id: 'e1', name: 'Agachamento goblet',  sets: 4, reps: '10–12',    rest: '2 min' },
+      { id: 'e2', name: 'Peso morto',          sets: 3, reps: '8',        rest: '3 min' },
+      { id: 'e3', name: 'Afundo',              sets: 3, reps: '12 cada',  rest: '2 min' },
+      { id: 'e4', name: 'Elevação gémeos',     sets: 4, reps: '15',       rest: '1 min' },
+      { id: 'e5', name: 'Prancha',             sets: 3, reps: '30s',      rest: '1 min' },
+    ]
+  },
+  6: {
+    name: 'HIIT', type: 'cardio',
+    exercises: [
+      { id: 'f1', name: '8× (20s sprint / 40s descanso)', sets: 1, reps: '~15 min', rest: '' },
+    ]
+  },
+  0: null,
+};
+
 // Map from any day string the old app might have used → 0-6
 const DAY_STR_MAP = {
   sun:0, dom:0, domingo:0,
@@ -50,6 +105,8 @@ const DB = {
   setHealth:   (d,v) => localStorage.setItem('health_' + d, JSON.stringify(v)),
   getGoals:    () => JSON.parse(localStorage.getItem('goals') || '{"water":2000,"calories":2000}'),
   setGoals:    v  => localStorage.setItem('goals', JSON.stringify(v)),
+  getWorkout:  d  => JSON.parse(localStorage.getItem('workout_' + d) || '{}'),
+  setWorkout:  (d,v) => localStorage.setItem('workout_' + d, JSON.stringify(v)),
 };
 
 // ---- State ----
@@ -171,6 +228,9 @@ function renderDashboard() {
 
   // Health
   html += renderHealthWidgets(todayDate);
+
+  // Workout
+  html += renderWorkoutWidget(todayDate);
 
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
@@ -306,6 +366,60 @@ function renderHealthWidgets(date) {
       <button class="cal-btn" onclick="openAddMeal('${date}')">+ Refeição</button>
     </div>
   </div>`;
+}
+
+function renderWorkoutWidget(date) {
+  const dayIdx = new Date().getDay();
+  const plan = WORKOUT_PROGRAM[dayIdx];
+
+  if (!plan) {
+    return `<div class="workout-widget" style="margin:0 16px 12px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:24px">😴</span>
+      <div><div class="workout-name" style="font-size:14px">Descanso</div>
+      <div class="workout-sub">Foca-te na recuperação e hidratação</div></div>
+    </div>`;
+  }
+
+  const doneSets = DB.getWorkout(date);
+  const totalSets = plan.exercises.reduce((s, e) => s + e.sets, 0);
+  const completedSets = plan.exercises.reduce((s, e) => s + Math.min(doneSets[e.id] || 0, e.sets), 0);
+  const pct = totalSets > 0 ? Math.round(completedSets / totalSets * 100) : 0;
+  const allDone = completedSets >= totalSets && totalSets > 0;
+  const typeIcon = plan.type === 'cardio' ? '🏃' : '🏋️';
+
+  const rows = plan.exercises.map(ex => {
+    const done = Math.min(doneSets[ex.id] || 0, ex.sets);
+    const dots = Array.from({length: ex.sets}, (_, i) =>
+      `<button class="set-dot${i < done ? ' done' : ''}" onclick="toggleWorkoutSet('${ex.id}',${i},'${date}')"></button>`
+    ).join('');
+    return `<div class="workout-exercise">
+      <div class="workout-ex-info">
+        <span class="workout-ex-name">${esc(ex.name)}</span>
+        <span class="workout-ex-meta">${ex.sets}×${ex.reps}${ex.rest ? ' · ' + ex.rest : ''}</span>
+      </div>
+      <div class="workout-sets">${dots}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="workout-widget${allDone ? ' all-done' : ''}" style="margin:0 16px 12px">
+    <div class="workout-top">
+      <div>
+        <div class="workout-name">${typeIcon} ${esc(plan.name)}</div>
+        <div class="workout-sub">${completedSets}/${totalSets} séries${allDone ? ' ✅' : ''}</div>
+      </div>
+      <div class="workout-pct${allDone ? ' done' : ''}">${pct}%</div>
+    </div>
+    <div class="workout-bar"><div class="workout-bar-fill${allDone ? ' done' : ''}" style="width:${pct}%"></div></div>
+    <div class="workout-exercises">${rows}</div>
+  </div>`;
+}
+
+function toggleWorkoutSet(exId, setIdx, date) {
+  const doneSets = DB.getWorkout(date);
+  const current = doneSets[exId] || 0;
+  doneSets[exId] = setIdx < current ? setIdx : setIdx + 1;
+  DB.setWorkout(date, doneSets);
+  renderDashboard();
 }
 
 function addWater(ml, date) {
