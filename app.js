@@ -293,7 +293,9 @@ function renderDashboard() {
   // Week
   html += `<div class="section"><div class="section-title">Esta semana</div>${renderWeekContent(now, allTasks)}</div>`;
 
+  const savedScroll = el.scrollTop;
   el.innerHTML = html;
+  el.scrollTop = savedScroll;
   drawNowLine();
 }
 
@@ -332,6 +334,7 @@ function renderHealthWidgets(date) {
 
   const waterPct = Math.min(100, h.water / g.water * 100);
   const totalKcal = h.meals.reduce((s, m) => s + m.kcal, 0);
+  const totalProt = h.meals.reduce((s, m) => s + (m.protein || 0), 0);
   const calPct = Math.min(100, totalKcal / g.calories * 100);
   const calOver = totalKcal > g.calories;
 
@@ -340,8 +343,12 @@ function renderHealthWidgets(date) {
     : h.water + ' ml';
   const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
 
-  const recentMeals = h.meals.slice(-3).map(m =>
-    `<div class="meal-item"><span>${esc(m.name)}</span><span class="meal-kcal">${m.kcal}</span></div>`
+  const recentMeals = h.meals.slice(-4).map(m =>
+    `<div class="meal-item">
+      <span class="meal-name-text">${esc(m.name)}</span>
+      <span class="meal-kcal">${m.kcal}${m.protein ? '<span class="meal-prot"> · ' + m.protein + 'g</span>' : ''}</span>
+      <button class="meal-del" onclick="deleteMeal('${m.id}','${date}')">×</button>
+    </div>`
   ).join('');
 
   return `<div class="health-widgets">
@@ -360,12 +367,20 @@ function renderHealthWidgets(date) {
     <div class="health-card">
       <div class="health-card-title">🔥 Calorias</div>
       <div class="health-card-value">${totalKcal} <span class="health-card-unit">kcal</span></div>
-      <div class="health-card-goal">meta: ${g.calories} kcal</div>
+      <div class="health-card-goal">meta: ${g.calories} kcal${totalProt ? ' · 🥩 ' + totalProt + 'g prot' : ''}</div>
       <div class="health-progress"><div class="health-progress-fill cal-fill${calOver ? ' over' : ''}" style="width:${calPct}%"></div></div>
       ${recentMeals ? `<div class="meal-list">${recentMeals}</div>` : ''}
       <button class="cal-btn" onclick="openAddMeal('${date}')">+ Refeição</button>
     </div>
   </div>`;
+}
+
+function deleteMeal(id, date) {
+  const h = DB.getHealth(date);
+  h.meals = h.meals.filter(m => m.id !== id);
+  DB.setHealth(date, h);
+  renderDashboard();
+  toast('Refeição removida');
 }
 
 function renderWorkoutWidget(date) {
@@ -470,11 +485,15 @@ function openAddMeal(date) {
     <label class="form-label">Porção e calorias</label>
     <div class="form-row">
       <input class="form-input" id="f-meal-portion" type="number" inputmode="numeric"
-             placeholder="Porção (g)" min="1" value="100" oninput="recalcKcal()">
+             placeholder="Porção (g)" min="1" value="100" oninput="recalcPortionDeps()">
       <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric"
              placeholder="Calorias (kcal)" min="0">
     </div>
+    <label class="form-label">Proteína (g) — opcional</label>
+    <input class="form-input" id="f-meal-protein" type="number" inputmode="numeric"
+           placeholder="ex: 30" min="0">
     <input id="f-kcal-100g" type="hidden" value="">
+    <input id="f-prot-100g" type="hidden" value="">
   </div>`;
   document.getElementById('modal-overlay').classList.add('open');
   setTimeout(() => document.getElementById('f-food-search')?.focus(), 100);
@@ -485,9 +504,10 @@ function saveMeal() {
   const kcal = parseInt(document.getElementById('f-meal-kcal')?.value);
   if (!name) { toast('Adiciona o nome da refeição!'); return; }
   if (isNaN(kcal) || kcal < 0) { toast('Calorias inválidas!'); return; }
+  const protein = parseInt(document.getElementById('f-meal-protein')?.value) || 0;
   const date = modalContext?.date || isoDate(new Date());
   const h = DB.getHealth(date);
-  h.meals.push({ id: uid(), name, kcal, time: new Date().toTimeString().slice(0, 5) });
+  h.meals.push({ id: uid(), name, kcal, protein, time: new Date().toTimeString().slice(0, 5) });
   DB.setHealth(date, h);
   closeModal();
   toast('Refeição adicionada! 🔥');
@@ -525,9 +545,10 @@ async function fetchFoodSearch(q) {
       const name = p.product_name;
       const brand = p.brands ? ' · ' + p.brands.split(',')[0].trim() : '';
       const kcal = Math.round(p.nutriments['energy-kcal_100g']);
-      return `<div class="food-result-item" data-name="${esc(name)}" data-kcal="${kcal}" onclick="selectFood(this)">
+      const prot = Math.round(p.nutriments['proteins_100g'] || 0);
+      return `<div class="food-result-item" data-name="${esc(name)}" data-kcal="${kcal}" data-prot="${prot}" onclick="selectFood(this)">
         <span class="food-result-name">${esc(name)}<span class="food-result-brand">${esc(brand)}</span></span>
-        <span class="food-result-kcal">${kcal} kcal/100g</span>
+        <span class="food-result-kcal">${kcal} kcal${prot ? ' · ' + prot + 'g P' : ''}</span>
       </div>`;
     }).join('');
   } catch {
@@ -538,22 +559,28 @@ async function fetchFoodSearch(q) {
 function selectFood(el) {
   const name = el.dataset.name;
   const kcal100 = parseInt(el.dataset.kcal);
+  const prot100 = parseInt(el.dataset.prot) || 0;
   document.getElementById('f-meal-name').value = name;
   document.getElementById('f-food-search').value = name;
   document.getElementById('f-kcal-100g').value = kcal100;
+  document.getElementById('f-prot-100g').value = prot100;
   const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
   document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+  if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
   const box = document.getElementById('food-results');
   box.innerHTML = '';
   box.classList.remove('visible');
 }
 
-function recalcKcal() {
+function recalcPortionDeps() {
   const kcal100 = parseInt(document.getElementById('f-kcal-100g')?.value);
-  if (!kcal100) return;
+  const prot100 = parseInt(document.getElementById('f-prot-100g')?.value) || 0;
   const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
-  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+  if (kcal100) document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+  if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
 }
+
+function recalcKcal() { recalcPortionDeps(); }
 
 async function scanBarcode() {
   if (!('BarcodeDetector' in window)) return;
@@ -583,13 +610,16 @@ async function fetchByBarcode(code) {
     if (data.status !== 1) { toast('Produto não encontrado'); return; }
     const p = data.product;
     const kcal100 = Math.round(p.nutriments?.['energy-kcal_100g'] || 0);
+    const prot100 = Math.round(p.nutriments?.['proteins_100g'] || 0);
     const name = p.product_name_pt || p.product_name || code;
     if (!kcal100) { toast('Produto sem informação nutricional'); return; }
     document.getElementById('f-meal-name').value = name;
     document.getElementById('f-food-search').value = name;
     document.getElementById('f-kcal-100g').value = kcal100;
+    document.getElementById('f-prot-100g').value = prot100;
     const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
     document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
+    if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
     const box = document.getElementById('food-results');
     if (box) { box.innerHTML = ''; box.classList.remove('visible'); }
     toast('Produto encontrado!');
@@ -832,7 +862,7 @@ function importFromKey(key) {
       title:     t.title || t.name || t.task || t.text || t.label || 'Tarefa importada',
       category:  t.category || t.cat || 'personal',
       priority:  t.priority || t.pri || 'medium',
-      days:      Array.isArray(t.days) ? t.days : [],
+      days:      normDays(t.days),
       date:      t.date || t.dueDate || '',
       startTime: t.startTime || t.time || t.start || '',
       endTime:   t.endTime || t.end || '',

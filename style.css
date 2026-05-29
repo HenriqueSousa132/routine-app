@@ -739,12 +739,14 @@ body {
 
 .meal-item {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   font-size: 11px;
   color: var(--text);
   gap: 4px;
 }
-.meal-item span:first-child {
+
+.meal-name-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -757,6 +759,29 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .meal-kcal::after { content: ' kcal'; }
+
+.meal-prot {
+  color: var(--success);
+  font-size: 10px;
+}
+
+.meal-del {
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  opacity: 0.6;
+}
+.meal-del:active { opacity: 1; color: var(--danger); }
 
 /* Workout widget */
 .workout-widget {

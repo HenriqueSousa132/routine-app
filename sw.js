@@ -1,4 +1,4 @@
-const CACHE = 'rotina-v2';
+const CACHE = 'rotina-v3';
 const ASSETS = ['./', './index.html', './app.js', './style.css', './manifest.json', './icon-192.svg'];
 
 self.addEventListener('install', e => {
