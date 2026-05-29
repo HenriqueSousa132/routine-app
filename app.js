@@ -101,9 +101,9 @@ const DB = {
   setTasks:    v  => localStorage.setItem('tasks', JSON.stringify(v)),
   getSettings: () => JSON.parse(localStorage.getItem('settings') || '{"notifications":false}'),
   setSettings: v  => localStorage.setItem('settings', JSON.stringify(v)),
-  getHealth:   d  => JSON.parse(localStorage.getItem('health_' + d) || '{"water":0,"meals":[]}'),
-  setHealth:   (d,v) => localStorage.setItem('health_' + d, JSON.stringify(v)),
-  getGoals:    () => JSON.parse(localStorage.getItem('goals') || '{"water":2000,"calories":2000}'),
+  getWater:    d  => JSON.parse(localStorage.getItem('water_' + d) || '0'),
+  setWater:    (d,v) => localStorage.setItem('water_' + d, JSON.stringify(v)),
+  getGoals:    () => JSON.parse(localStorage.getItem('goals') || '{"water":2000}'),
   setGoals:    v  => localStorage.setItem('goals', JSON.stringify(v)),
   getWorkout:  d  => JSON.parse(localStorage.getItem('workout_' + d) || '{}'),
   setWorkout:  (d,v) => localStorage.setItem('workout_' + d, JSON.stringify(v)),
@@ -116,7 +116,6 @@ let timers = {};
 let nowLineInterval = null;
 let modalMode = 'task';
 let modalContext = null;
-let foodSearchTimer = null;
 
 // ---- Bootstrap ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -329,58 +328,27 @@ function drawNowLine() {
 
 // ---- HEALTH WIDGETS ----
 function renderHealthWidgets(date) {
-  const h = DB.getHealth(date);
+  const water = DB.getWater(date);
   const g = DB.getGoals();
-
-  const waterPct = Math.min(100, h.water / g.water * 100);
-  const totalKcal = h.meals.reduce((s, m) => s + m.kcal, 0);
-  const totalProt = h.meals.reduce((s, m) => s + (m.protein || 0), 0);
-  const calPct = Math.min(100, totalKcal / g.calories * 100);
-  const calOver = totalKcal > g.calories;
-
-  const waterLabel = h.water >= 1000
-    ? (h.water / 1000).toFixed(1).replace(/\.0$/, '') + ' L'
-    : h.water + ' ml';
+  const waterPct = Math.min(100, water / g.water * 100);
+  const waterLabel = water >= 1000
+    ? (water / 1000).toFixed(1).replace(/\.0$/, '') + ' L'
+    : water + ' ml';
   const goalWater = g.water >= 1000 ? (g.water / 1000) + ' L' : g.water + ' ml';
 
-  const recentMeals = h.meals.slice(-4).map(m =>
-    `<div class="meal-item">
-      <span class="meal-name-text">${esc(m.name)}</span>
-      <span class="meal-kcal">${m.kcal}${m.protein ? '<span class="meal-prot"> · ' + m.protein + 'g</span>' : ''}</span>
-      <button class="meal-del" onclick="deleteMeal('${m.id}','${date}')">×</button>
-    </div>`
-  ).join('');
-
-  return `<div class="health-widgets">
-    <div class="health-card">
+  return `<div class="health-widget-row">
+    <div class="health-card water-card">
       <div class="health-card-title">💧 Água</div>
-      <div class="health-card-value">${waterLabel}</div>
-      <div class="health-card-goal">meta: ${goalWater}</div>
+      <div class="health-card-value">${waterLabel} <span class="health-card-unit">/ ${goalWater}</span></div>
       <div class="health-progress"><div class="health-progress-fill water-fill" style="width:${waterPct}%"></div></div>
       <div class="water-btns">
-        <button class="water-btn" onclick="addWater(150,'${date}')">+150</button>
-        <button class="water-btn" onclick="addWater(250,'${date}')">+250</button>
-        <button class="water-btn" onclick="addWater(500,'${date}')">+500</button>
+        <button class="water-btn" onclick="addWater(150,'${date}')">+150 ml</button>
+        <button class="water-btn" onclick="addWater(250,'${date}')">+250 ml</button>
+        <button class="water-btn" onclick="addWater(500,'${date}')">+500 ml</button>
         <button class="water-btn water-btn-edit" onclick="openWaterCustom('${date}')">✎</button>
       </div>
     </div>
-    <div class="health-card">
-      <div class="health-card-title">🔥 Calorias</div>
-      <div class="health-card-value">${totalKcal} <span class="health-card-unit">kcal</span></div>
-      <div class="health-card-goal">meta: ${g.calories} kcal${totalProt ? ' · 🥩 ' + totalProt + 'g prot' : ''}</div>
-      <div class="health-progress"><div class="health-progress-fill cal-fill${calOver ? ' over' : ''}" style="width:${calPct}%"></div></div>
-      ${recentMeals ? `<div class="meal-list">${recentMeals}</div>` : ''}
-      <button class="cal-btn" onclick="openAddMeal('${date}')">+ Refeição</button>
-    </div>
   </div>`;
-}
-
-function deleteMeal(id, date) {
-  const h = DB.getHealth(date);
-  h.meals = h.meals.filter(m => m.id !== id);
-  DB.setHealth(date, h);
-  renderDashboard();
-  toast('Refeição removida');
 }
 
 function renderWorkoutWidget(date) {
@@ -438,9 +406,7 @@ function toggleWorkoutSet(exId, setIdx, date) {
 }
 
 function addWater(ml, date) {
-  const h = DB.getHealth(date);
-  h.water = (h.water || 0) + ml;
-  DB.setHealth(date, h);
+  DB.setWater(date, (DB.getWater(date) || 0) + ml);
   toast(`+${ml} ml 💧`);
   renderDashboard();
 }
@@ -462,168 +428,6 @@ function saveWaterCustom() {
   if (isNaN(ml) || ml <= 0) { toast('Valor inválido'); return; }
   closeModal();
   addWater(ml, modalContext?.date || isoDate(new Date()));
-}
-
-function openAddMeal(date) {
-  modalMode = 'meal';
-  modalContext = { date };
-  const canScan = 'BarcodeDetector' in window;
-  document.getElementById('modal-title').textContent = 'Adicionar Refeição';
-  document.getElementById('modal-body').innerHTML = `<div class="form-group">
-    <label class="form-label">Pesquisar alimento</label>
-    <div class="food-search-row">
-      <input class="form-input food-search-input" id="f-food-search" type="text"
-             placeholder="ex: frango grelhado, arroz…" autocomplete="off"
-             oninput="onFoodSearch(this.value)">
-      ${canScan ? `<button class="food-scan-btn" onclick="scanBarcode()" title="Ler código de barras">📷</button>` : ''}
-    </div>
-    <div id="food-results" class="food-results"></div>
-
-    <label class="form-label">Nome da refeição</label>
-    <input class="form-input" id="f-meal-name" type="text" placeholder="Nome" autocomplete="off">
-
-    <label class="form-label">Porção e calorias</label>
-    <div class="form-row">
-      <input class="form-input" id="f-meal-portion" type="number" inputmode="numeric"
-             placeholder="Porção (g)" min="1" value="100" oninput="recalcPortionDeps()">
-      <input class="form-input" id="f-meal-kcal" type="number" inputmode="numeric"
-             placeholder="Calorias (kcal)" min="0">
-    </div>
-    <label class="form-label">Proteína (g) — opcional</label>
-    <input class="form-input" id="f-meal-protein" type="number" inputmode="numeric"
-           placeholder="ex: 30" min="0">
-    <input id="f-kcal-100g" type="hidden" value="">
-    <input id="f-prot-100g" type="hidden" value="">
-  </div>`;
-  document.getElementById('modal-overlay').classList.add('open');
-  setTimeout(() => document.getElementById('f-food-search')?.focus(), 100);
-}
-
-function saveMeal() {
-  const name = document.getElementById('f-meal-name')?.value.trim();
-  const kcal = parseInt(document.getElementById('f-meal-kcal')?.value);
-  if (!name) { toast('Adiciona o nome da refeição!'); return; }
-  if (isNaN(kcal) || kcal < 0) { toast('Calorias inválidas!'); return; }
-  const protein = parseInt(document.getElementById('f-meal-protein')?.value) || 0;
-  const date = modalContext?.date || isoDate(new Date());
-  const h = DB.getHealth(date);
-  h.meals.push({ id: uid(), name, kcal, protein, time: new Date().toTimeString().slice(0, 5) });
-  DB.setHealth(date, h);
-  closeModal();
-  toast('Refeição adicionada! 🔥');
-  renderDashboard();
-}
-
-// ---- FOOD SEARCH (Open Food Facts) ----
-function onFoodSearch(q) {
-  clearTimeout(foodSearchTimer);
-  const box = document.getElementById('food-results');
-  if (!box) return;
-  if (!q || q.length < 2) { box.innerHTML = ''; box.classList.remove('visible'); return; }
-  box.innerHTML = '<div class="food-searching">A pesquisar…</div>';
-  box.classList.add('visible');
-  foodSearchTimer = setTimeout(() => fetchFoodSearch(q), 400);
-}
-
-async function fetchFoodSearch(q) {
-  const box = document.getElementById('food-results');
-  if (!box) return;
-  try {
-    const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_terms='
-      + encodeURIComponent(q)
-      + '&search_simple=1&action=process&json=1&fields=product_name,brands,nutriments&page_size=7';
-    const res = await fetch(url);
-    const data = await res.json();
-    const items = (data.products || []).filter(p =>
-      p.product_name && p.nutriments?.['energy-kcal_100g'] != null
-    ).slice(0, 6);
-    if (!items.length) {
-      box.innerHTML = '<div class="food-searching">Sem resultados — insere as kcal manualmente.</div>';
-      return;
-    }
-    box.innerHTML = items.map(p => {
-      const name = p.product_name;
-      const brand = p.brands ? ' · ' + p.brands.split(',')[0].trim() : '';
-      const kcal = Math.round(p.nutriments['energy-kcal_100g']);
-      const prot = Math.round(p.nutriments['proteins_100g'] || 0);
-      return `<div class="food-result-item" data-name="${esc(name)}" data-kcal="${kcal}" data-prot="${prot}" onclick="selectFood(this)">
-        <span class="food-result-name">${esc(name)}<span class="food-result-brand">${esc(brand)}</span></span>
-        <span class="food-result-kcal">${kcal} kcal${prot ? ' · ' + prot + 'g P' : ''}</span>
-      </div>`;
-    }).join('');
-  } catch {
-    box.innerHTML = '<div class="food-searching">Sem ligação — insere as kcal manualmente.</div>';
-  }
-}
-
-function selectFood(el) {
-  const name = el.dataset.name;
-  const kcal100 = parseInt(el.dataset.kcal);
-  const prot100 = parseInt(el.dataset.prot) || 0;
-  document.getElementById('f-meal-name').value = name;
-  document.getElementById('f-food-search').value = name;
-  document.getElementById('f-kcal-100g').value = kcal100;
-  document.getElementById('f-prot-100g').value = prot100;
-  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
-  document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
-  if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
-  const box = document.getElementById('food-results');
-  box.innerHTML = '';
-  box.classList.remove('visible');
-}
-
-function recalcPortionDeps() {
-  const kcal100 = parseInt(document.getElementById('f-kcal-100g')?.value);
-  const prot100 = parseInt(document.getElementById('f-prot-100g')?.value) || 0;
-  const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
-  if (kcal100) document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
-  if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
-}
-
-function recalcKcal() { recalcPortionDeps(); }
-
-async function scanBarcode() {
-  if (!('BarcodeDetector' in window)) return;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.capture = 'environment';
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-    try {
-      const bitmap = await createImageBitmap(file);
-      const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
-      const barcodes = await detector.detect(bitmap);
-      if (!barcodes.length) { toast('Código de barras não detectado'); return; }
-      toast('A pesquisar produto…');
-      await fetchByBarcode(barcodes[0].rawValue);
-    } catch { toast('Erro ao ler código de barras'); }
-  };
-  input.click();
-}
-
-async function fetchByBarcode(code) {
-  try {
-    const res = await fetch('https://world.openfoodfacts.org/api/v0/product/' + code + '.json');
-    const data = await res.json();
-    if (data.status !== 1) { toast('Produto não encontrado'); return; }
-    const p = data.product;
-    const kcal100 = Math.round(p.nutriments?.['energy-kcal_100g'] || 0);
-    const prot100 = Math.round(p.nutriments?.['proteins_100g'] || 0);
-    const name = p.product_name_pt || p.product_name || code;
-    if (!kcal100) { toast('Produto sem informação nutricional'); return; }
-    document.getElementById('f-meal-name').value = name;
-    document.getElementById('f-food-search').value = name;
-    document.getElementById('f-kcal-100g').value = kcal100;
-    document.getElementById('f-prot-100g').value = prot100;
-    const portion = parseInt(document.getElementById('f-meal-portion').value) || 100;
-    document.getElementById('f-meal-kcal').value = Math.round(kcal100 * portion / 100);
-    if (prot100) document.getElementById('f-meal-protein').value = Math.round(prot100 * portion / 100);
-    const box = document.getElementById('food-results');
-    if (box) { box.innerHTML = ''; box.classList.remove('visible'); }
-    toast('Produto encontrado!');
-  } catch { toast('Erro ao pesquisar produto'); }
 }
 
 // ---- WEEK VIEW ----
@@ -724,12 +528,8 @@ function renderSettingsContent() {
       <div class="section-title">Metas diárias</div>
       <div class="card">
         <div class="settings-item" onclick="openGoals()">
-          <span class="settings-label">💧 Água</span>
+          <span class="settings-label">💧 Água diária</span>
           <span class="settings-value">${goalWater} ›</span>
-        </div>
-        <div class="settings-item" onclick="openGoals()">
-          <span class="settings-label">🔥 Calorias</span>
-          <span class="settings-value">${g.calories} kcal ›</span>
         </div>
       </div>
     </div>
@@ -782,24 +582,20 @@ function openGoals() {
   modalMode = 'goals';
   document.getElementById('btn-save').style.display = '';
   document.getElementById('btn-cancel').textContent = 'Cancelar';
-  document.getElementById('modal-title').textContent = 'Metas diárias';
+  document.getElementById('modal-title').textContent = 'Meta de água';
   document.getElementById('modal-body').innerHTML = `<div class="form-group">
-    <label class="form-label">💧 Água (ml)</label>
+    <label class="form-label">💧 Água diária (ml)</label>
     <input class="form-input" id="f-goal-water" type="number" inputmode="numeric" value="${g.water}" min="100">
-    <label class="form-label">🔥 Calorias (kcal)</label>
-    <input class="form-input" id="f-goal-cal" type="number" inputmode="numeric" value="${g.calories}" min="100">
   </div>`;
   setTimeout(() => document.getElementById('f-goal-water')?.focus(), 100);
 }
 
 function saveGoals() {
   const water = parseInt(document.getElementById('f-goal-water')?.value);
-  const calories = parseInt(document.getElementById('f-goal-cal')?.value);
   if (isNaN(water) || water < 100) { toast('Meta de água inválida'); return; }
-  if (isNaN(calories) || calories < 100) { toast('Meta de calorias inválida'); return; }
-  DB.setGoals({ water, calories });
+  DB.setGoals({ water });
   closeModal();
-  toast('Metas guardadas!');
+  toast('Meta guardada!');
   renderDashboard();
 }
 
@@ -890,7 +686,6 @@ function bindModal() {
 
 function dispatchSave() {
   if (modalMode === 'task')    saveTask();
-  else if (modalMode === 'meal')  saveMeal();
   else if (modalMode === 'water') saveWaterCustom();
   else if (modalMode === 'goals') saveGoals();
 }
